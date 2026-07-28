@@ -11,7 +11,13 @@
   const auth = firebase.auth(), database = firebase.database();
 
   const localData = () => keys.reduce((result, key) => { const value = localStorage.getItem(key); if (value !== null) result[key] = value; return result; }, {});
-  const text = value => JSON.stringify(value || {});
+  // Firebase may return object fields in a different order. Normalize to our
+  // fixed key order before comparing, so identical homework never looks like
+  // a change from another device.
+  const text = value => JSON.stringify(keys.reduce((result, key) => {
+    if (Object.prototype.hasOwnProperty.call(value || {}, key)) result[key] = value[key];
+    return result;
+  }, {}));
   const message = (value, error = false) => { const box = document.getElementById('auth-message'); if (box) { box.textContent = value; box.classList.toggle('error', error); } };
   const apply = data => { applying = true; try { keys.forEach(key => Object.prototype.hasOwnProperty.call(data, key) ? setItem(key, data[key]) : removeItem(key)); } finally { applying = false; } };
   const showApp = account => {
@@ -52,7 +58,16 @@
         loaded = true; ready = true; showApp(account); resolveReady(); if (wasReady) window.location.reload(); return;
       }
       const remoteText = text(remote);
-      if (remoteText !== lastData) { lastData = remoteText; apply(remote || {}); window.location.reload(); }
+      if (remoteText !== lastData) {
+        lastData = remoteText;
+        apply(remote || {});
+
+        // Never interrupt active typing. The next refresh/page visit will use
+        // the already-saved cloud data.
+        const activeElement = document.activeElement;
+        const isEditing = activeElement && ['INPUT', 'TEXTAREA'].includes(activeElement.tagName);
+        if (!isEditing) window.location.reload();
+      }
     };
     dataRef.on('value', listener, error => { message(`Could not load cloud data: ${error.message}`, true); if (!ready) { ready = true; resolveReady(); } });
     stop = () => dataRef.off('value', listener);
