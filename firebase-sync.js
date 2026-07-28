@@ -26,7 +26,19 @@
   const showSignIn = () => { document.getElementById('auth-gate')?.classList.remove('hidden'); document.getElementById('app')?.classList.add('auth-locked'); };
   const write = () => {
     if (!ready || applying || !user) return;
-    clearTimeout(timer); timer = setTimeout(() => { const data = localData(), serialized = text(data); if (serialized !== lastData) dataRef.set(data).then(() => { lastData = serialized; }).catch(error => message(`Could not sync: ${error.message}`, true)); }, 500);
+    clearTimeout(timer); timer = setTimeout(() => {
+      const data = localData(), serialized = text(data);
+      if (serialized === lastData) return;
+
+      // Record this version before sending it. Realtime Database immediately
+      // sends our own successful write back through the listener; that echo is
+      // not a change from another device and must never reload this page.
+      lastData = serialized;
+      dataRef.set(data).catch(error => {
+        lastData = '';
+        message(`Could not sync: ${error.message}`, true);
+      });
+    }, 500);
   };
   localStorage.setItem = (key, value) => { setItem(key, value); if (keys.includes(key)) write(); };
   localStorage.removeItem = key => { removeItem(key); if (keys.includes(key)) write(); };
@@ -59,5 +71,28 @@
     document.getElementById('sign-out')?.addEventListener('click', () => auth.signOut());
   }
   document.addEventListener('DOMContentLoaded', wireUi);
-  auth.onAuthStateChanged(account => { if (account) return loadUser(account); stop?.(); user = null; dataRef = null; if (ready) { applying = true; keys.forEach(removeItem); applying = false; window.location.reload(); } else { showSignIn(); ready = true; resolveReady(); } });
+
+  // Firebase's LOCAL persistence survives page reloads and browser restarts.
+  // This is set before observing auth state so the saved session is restored
+  // before the sign-in screen is ever shown.
+  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+    .catch(error => message(`Could not keep you signed in: ${error.message}`, true))
+    .finally(() => {
+      auth.onAuthStateChanged(account => {
+        if (account) return loadUser(account);
+        stop?.();
+        user = null;
+        dataRef = null;
+        if (ready) {
+          applying = true;
+          keys.forEach(removeItem);
+          applying = false;
+          window.location.reload();
+        } else {
+          showSignIn();
+          ready = true;
+          resolveReady();
+        }
+      });
+    });
 })();
